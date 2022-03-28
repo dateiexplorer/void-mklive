@@ -40,6 +40,8 @@ BOOTLOADER_DONE=
 PARTITIONS_DONE=
 NETWORK_DONE=
 FILESYSTEMS_DONE=
+IMPORT_DONE=
+EXPORT_DONE=
 
 TARGETDIR=/mnt/target
 LOG=/dev/tty8
@@ -1349,6 +1351,13 @@ ${BOLD}Do you want to continue?${RESET}" 20 80 || return
 
     # install bootloader.
     set_bootloader
+
+    # execute postinstall script.
+    POSTINSTALL=$(get_option POSTINSTALL)
+    if [ -n "$POSTINSTALL" ]; then
+        source "$POSTINSTALL"
+    fi
+
     sync && sync && sync
 
     # unmount all filesystems.
@@ -1383,6 +1392,36 @@ menu_source() {
     set_option SOURCE $src
 }
 
+menu_import() {
+    local _preset=""
+
+    DIALOG --inputbox "Enter a path to the configuration file:" \
+            ${INPUTSIZE} "$_preset"
+    if [ $? -eq 0 ]; then
+        cat "$(cat $ANSWER)" > "$CONF_FILE"
+
+        IMPORT_DONE=1
+        break
+    else
+        return
+    fi
+}
+
+menu_export() {
+    local _preset="$HOME/void-installer.conf"
+
+    DIALOG --inputbox "Enter a file where settings will be stored:" \
+            ${INPUTSIZE} "$_preset"
+    if [ $? -eq 0 ]; then
+        cat "$CONF_FILE" > "$(cat $ANSWER)"
+
+        EXPORT_DONE=1
+        break
+    else
+        return
+    fi
+}
+
 menu() {
     local AFTER_HOSTNAME
     if [ -z "$DEFITEM" ]; then
@@ -1395,6 +1434,7 @@ menu() {
             --extra-button --extra-label "Settings" \
             --title " Void Linux installation menu " \
             --menu "$MENULABEL" 10 70 0 \
+            "Import" "Import settings from a configuration file" \
             "Keyboard" "Set system keyboard" \
             "Network" "Set up the network" \
             "Source" "Set source installation" \
@@ -1405,6 +1445,7 @@ menu() {
             "BootLoader" "Set disk to install bootloader" \
             "Partition" "Partition disk(s)" \
             "Filesystems" "Configure filesystems and mount points" \
+            "Export" "Export current settings to a file" \
             "Install" "Start installation with saved settings" \
             "Exit" "Exit installation"
     else
@@ -1413,6 +1454,7 @@ menu() {
             --extra-button --extra-label "Settings" \
             --title " Void Linux installation menu " \
             --menu "$MENULABEL" 10 70 0 \
+            "Import" "Import settings from a configuration file" \
             "Keyboard" "Set system keyboard" \
             "Network" "Set up the network" \
             "Source" "Set source installation" \
@@ -1424,6 +1466,7 @@ menu() {
             "BootLoader" "Set disk to install bootloader" \
             "Partition" "Partition disk(s)" \
             "Filesystems" "Configure filesystems and mount points" \
+            "Export" "Export current settings to a file" \
             "Install" "Start installation with saved settings" \
             "Exit" "Exit installation"
     fi
@@ -1438,6 +1481,7 @@ menu() {
     fi
 
     case $(cat $ANSWER) in
+        "Import") menu_import && [ -n "$IMPORT_DONE" ] && DEFITEM="Install";;
         "Keyboard") menu_keymap && [ -n "$KEYBOARD_DONE" ] && DEFITEM="Network";;
         "Network") menu_network && [ -n "$NETWORK_DONE" ] && DEFITEM="Source";;
         "Source") menu_source && [ -n "$SOURCE_DONE" ] && DEFITEM="Hostname";;
@@ -1449,7 +1493,8 @@ menu() {
                && DEFITEM="BootLoader";;
         "BootLoader") menu_bootloader && [ -n "$BOOTLOADER_DONE" ] && DEFITEM="Partition";;
         "Partition") menu_partitions && [ -n "$PARTITIONS_DONE" ] && DEFITEM="Filesystems";;
-        "Filesystems") menu_filesystems && [ -n "$FILESYSTEMS_DONE" ] && DEFITEM="Install";;
+        "Filesystems") menu_filesystems && [ -n "$FILESYSTEMS_DONE" ] && DEFITEM="Export";;
+        "Export") menu_export && [ -n "$EXPORT_DONE" ] && DEFITEM="Install";;
         "Install") menu_install;;
         "Exit") DIE;;
         *) DIALOG --yesno "Abort Installation?" ${YESNOSIZE} && DIE
