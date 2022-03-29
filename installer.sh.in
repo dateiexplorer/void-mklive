@@ -36,6 +36,7 @@ USERLOGIN_DONE=
 USERPASSWORD_DONE=
 USERNAME_DONE=
 USERGROUPS_DONE=
+USERACCOUNT_DONE=
 BOOTLOADER_DONE=
 PARTITIONS_DONE=
 NETWORK_DONE=
@@ -377,6 +378,13 @@ show_partitions() {
                 [ "$fstype" = "LVM2_member" ] && continue
                 fssize=$(lsblk -nr /dev/$part|awk '{print $4}'|head -1)
                 echo "/dev/$part"
+
+                # Get fs type from configuration if available. This ensures
+                # that the user is faced with the proper fs type if he
+                # installs the system.
+                # Same for other devices...
+                fsconf=$(grep "MOUNTPOINT /dev/$part" "$CONF_FILE"|awk '{print $3}')
+                [ -n "$fsconf" ] && fstype=$fsconf
                 echo "size:${fssize:-unknown};fstype:${fstype:-none}"
             fi
         done
@@ -391,6 +399,9 @@ show_partitions() {
         fstype=$(lsblk -nfr $p|awk '{print $2}'|head -1)
         fssize=$(lsblk -nr $p|awk '{print $4}'|head -1)
         echo "${p}"
+
+        fsconf=$(grep "MOUNTPOINT ${p}" "$CONF_FILE"|awk '{print $3}')
+        [ -n "$fsconf" ] && fstype=$fsconf
         echo "size:${fssize:-unknown};fstype:${fstype:-none}"
     done
     # Software raid (md)
@@ -402,6 +413,9 @@ show_partitions() {
             [ "$fstype" = "LVM2_member" ] && continue
             fssize=$(lsblk -nr /dev/$part|awk '{print $4}')
             echo "$p"
+
+            fsconf=$(grep "MOUNTPOINT ${p}" "$CONF_FILE"|awk '{print $3}')
+            [ -n "$fsconf" ] && fstype=$fsconf
             echo "size:${fssize:-unknown};fstype:${fstype:-none}"
         fi
     done
@@ -412,13 +426,18 @@ show_partitions() {
         [ "$fstype" = "LVM2_member" ] && continue
         fssize=$(lsblk -nr /dev/cciss/$part|awk '{print $4}')
         echo "/dev/cciss/$part"
+
+        fsconf=$(grep "MOUNTPOINT /dev/cciss/$part" "$CONF_FILE"|awk '{print $3}')
+        [ -n "$fsconf" ] && fstype=$fsconf
         echo "size:${fssize:-unknown};fstype:${fstype:-none}"
     done
     if [ -e /sbin/lvs ]; then
         # LVM
         lvs --noheadings|while read lvname vgname perms size; do
             echo "/dev/mapper/${vgname}-${lvname}"
-            echo "size:${size};fstype:lvm"
+
+            fsconf=$(grep "/dev/mapper/${vgname}-${lvname}" "$CONF_FILE"|awk '{print $3}')
+            echo "size:${size};fstype:${fsconf:-lvm}"
         done
     fi
 }
@@ -754,18 +773,10 @@ menu_useraccount() {
 }
 
 set_useraccount() {
-    local USERLOGIN=$(get_option USERLOGIN)
-    local USERPASSWORD=$(get_option USERPASSWORD)
-    local USERNAME=$(get_option USERNAME)
-    local USERGROUPS=$(get_option USERGROUPS)
-
-    [ -z "$USERLOGIN" ] && return
-    [ -z "$USERPASSWORD" ] && return
-    [ -z "$USERNAME" ] && return
-    [ -z "$USERGROUPS" ] && return
-    useradd -R $TARGETDIR -m -G $USERGROUPS \
-        -c "$USERNAME" $USERLOGIN
-    echo "$USERLOGIN:$USERPASSWORD" | \
+    [ -z "$USERACCOUNT_DONE" ] && return
+    useradd -R $TARGETDIR -m -G $(get_option USERGROUPS) \
+        -c "$(get_option USERNAME)" $(get_option USERLOGIN)
+    echo "$(get_option USERLOGIN):$(get_option USERPASSWORD)" | \
         chpasswd -R $TARGETDIR -c SHA512
 }
 
@@ -823,13 +834,15 @@ set_bootloader() {
 test_network() {
     # Pick a peace of data to download to ensure that a network connection is
     # available.
-    local _file="http://alpha.de.repo.voidlinux.org/live/xtraeme.asc"
+    local file="http://alpha.de.repo.voidlinux.org/live/xtraeme.asc"
 
-    # Download with XBPS, remove it directly afterwards
-    xbps-uhelper fetch "$file" >$LOG 2>&1 || rm -f xtraeme.asc
+    # Download file with XBPS, remove it directly afterwards
+    xbps-uhelper fetch "$file" >$LOG 2>&1
+    local status=$?
+    rm -f xtraeme.asc
 
     # If next error `$?` is 0, no error detected. Network is reachable.
-    if [ $? -eq 0 ]; then
+    if [ $status -eq 0 ]; then
         DIALOG --msgbox "Network is working properly!" ${MSGBOXSIZE}
         NETWORK_DONE=1
         return 1
@@ -967,6 +980,18 @@ menu_network() {
         else
             configure_net $dev
         fi
+    fi
+}
+
+validate_useraccount() {
+    local USERLOGIN=$(get_option USERLOGIN)
+    local USERPASSWORD=$(get_option USERPASSWORD)
+    local USERNAME=$(get_option USERNAME)
+    local USERGROUPS=$(get_option USERGROUPS)
+
+    if [ -n "$USERLOGIN" ] && [ -n "$USERPASSWORD" ] \
+        && [ -n "$USERNAME" ] && [ -n "$USERGROUPS" ]; then
+        USERACCOUNT_DONE=1
     fi
 }
 
@@ -1225,6 +1250,16 @@ please do so before starting the installation.${RESET}" ${MSGBOXSIZE}
         DIALOG --msgbox "${BOLD}The disk to install the bootloader has not been \
 configured, please do so before starting the installation.${RESET}" ${MSGBOXSIZE}
         return 1
+    fi
+
+    # Validate useraccount. All parameters must be set (name, password,
+    # login name, groups).
+    validate_useraccount
+    if [ -z "$USERACCOUNT_DONE" ]; then
+        DIALOG --yesno "${BOLD}The useraccount is not set up properly.${RESET}\n\n
+${BOLD}${RED}WARNING: no user will be created. You're only able to login with \
+with the root user in your new system.${RESET}\n\n
+${BOLD}Do you want to continue?${RESET}" 10 60       || return
     fi
 
     # Validate filesystems after making sure bootloader is done,
